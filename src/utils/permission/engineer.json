@@ -1,0 +1,16 @@
+{
+    "engineer_engineering_read": {
+        "name": "engineer_engineering_read",
+        "description": "can read engineering",
+        "resource": "engineer",
+        "function": "engineering",
+        "action": "read"
+    },
+    "engineer_engineering_write": {
+        "name": "engineer_engineering_write",
+        "description": "can write engineering",
+        "resource": "engineer",
+        "function": "engineering",
+        "action": "write"
+    }
+}

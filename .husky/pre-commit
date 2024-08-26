@@ -1,0 +1,5 @@
+#!/bin/sh
+. "$(dirname "$0")/_/husky.sh"
+# env FORCE_COLOR=1 npx lint-staged || (echo \"\"; false)
+
+npx lint-staged -q || (echo "try \"npx eslint --fix your_files.js\" for auto-fix or \"git commit --no-verify\" for bypass this check"; false)

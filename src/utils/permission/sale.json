@@ -1,0 +1,25 @@
+{
+    "sale_quotation_read_all": {
+        "name": "sale_quotation_read",
+        "description": "can read quotation",
+        "resource": "sale",
+        "function": "quotation",
+        "action": "read",
+        "scope": "all"
+    },
+    "sale_quotation_read_self": {
+        "name": "sale_quotation_read",
+        "description": "can read quotation",
+        "resource": "sale",
+        "function": "quotation",
+        "action": "read",
+        "scope": "self"
+    },
+    "sale_quotation_write": {
+        "name": "sale_quotation_write",
+        "description": "can write quotation",
+        "resource": "sale",
+        "function": "quotation",
+        "action": "write"
+    }
+}

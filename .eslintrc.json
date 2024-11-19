@@ -1,0 +1,32 @@
+{
+    "env": {
+        "node": true,
+        "commonjs": true,
+        "es2021": true
+    },
+    "extends": "eslint:recommended",
+    "parserOptions": {
+      "sourceType": "module",
+      "allowImportExportEverywhere": true
+    },
+    "ignorePatterns": ["src/templates/**", "src/utils/permission/*.json", "database/**/*.*"],
+    "rules": {
+        "indent": [
+            "error",
+            4,
+            { "SwitchCase" : 1  }  
+        ],
+        "no-unused-vars": [
+            "warn",
+            {
+                "vars": "all",
+                "args": "after-used",
+                "ignoreRestSiblings": false
+            }
+        ],
+        "semi": [
+            "error",
+            "always"
+        ]
+    }
+}

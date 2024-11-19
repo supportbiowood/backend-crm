@@ -1,0 +1,9 @@
+{
+    "setting_rbac_modify": {
+        "name": "setting_rbac_modify",
+        "description": "can modify permission of role, including create, read, update, and delete role or permission.",
+        "resource": "rbac",
+        "function": "permission",
+        "action": "modify"
+    }
+}

@@ -1,0 +1,495 @@
+// timestamp -> int (unix)
+// vim camelCase to under_score
+// :%s/\<\u\|\l\u/\= join(split(tolower(submatch(0)), '\zs'), '_')/gc
+// TODO: add   _created int
+//  _lastupdate int
+
+// Enum
+// ====
+
+// General
+Enum percentage_steps {
+  "10%"
+  "20%"
+  "30%"
+  "40%"
+  "50%"
+  "60%"
+  "80%"
+  "90%"
+  "100%"
+}
+
+Enum name_prefix {
+  mr // นาย
+  mrs // นาง
+  ms // นางสาว
+  none // ไม่ระบุ
+}
+
+Enum attachment_type {
+  contact
+  project
+  warranty
+}
+
+Enum approval_status {
+  draft
+  submitted
+  rejected
+  approved
+}
+
+// Project
+Enum payment_type {
+  credit
+  cash
+}
+
+Enum project_status {
+  new // (( )) โปรเจคใหม่
+  ongoing // (( )) กำลังดำเนินการ
+  quotation // (( )) เสนอราคา
+  quotation_accepted // ((/)) ยอมรับการเสนอราคา
+  closed_success // ((/)) ปิดได้
+  closed_fail // ((X)) ปิดไม่ได้
+  finished // ((/)) จบโครงการ
+  service // (( )) ดูแลงาน (อยู่ในระยะประกัน)
+  service_ended // ((/)) ดูแลงาน (สิ้นสุดระยะประกัน)
+}
+
+Enum individual_status {
+  inactive // (  ) grayed out
+  active // (( )) purple outline
+  completed // ((/)) purple check
+}
+
+Enum project_category {
+  house // บ้านส่วนตัว
+  condo // คอนโด
+  village // หมู่บ้าน
+  hotel // โรงแรม/รีสอร์ท
+  mall // ห้างสรรพสินค้า
+  university // มหาวิทยาลัย
+  government // รายการ(หน่วยงาน)
+  factory // โรงงาน
+  other
+}
+
+Enum project_stage {
+  bid // วางประมูล
+  spec // วางเสปค
+  construction // กำลังก่อสร้าง
+  other // อื่นๆ
+}
+
+Enum warranty_type {
+  product // สินค้า
+  installment // งานติดตั้ง
+  service // บริการ
+}
+
+Enum activity_type {
+  memo // บันทึก
+  appointment // นัดหมาย event
+  checkin 
+  shipment // การส่งสินค้า
+  sales // เอกสาร QA/SO etc.
+  document // เอกสาร
+  image // รูปภาพ
+  status_change // e.g. quotation_accepted --> closed_success
+  contact_change // e.g. เปลี่ยน sales
+}
+
+// Contact
+Enum business_category {
+  individual
+  commercial
+  merchant
+}
+
+Enum commercial_type {
+  co_ltd // บริษัทจำกัด
+  part_ltd // ห้างหุ้นส่วนจำกัด
+  pub_co_ltd // บริษัท มหาชน จำกัด
+  inc // ห้างหุ้นส่วนสามัญนิติบุคคล
+}
+
+// Employee
+Enum employee_status {
+  ok
+  delete
+}
+
+Enum employee_department {
+  sales
+  accounting
+  purchase
+  management
+  logistics
+  engineer
+  inventory
+  hr
+}
+
+Enum contact_channel_type {
+  contact
+  person
+}
+
+// Event
+Enum event_status {
+  planned // วางแผน
+  confirmed // นัดหมาย
+  cancelled // ยกเลิก
+  finished // เสร็จสิ้น
+}
+
+// Tables
+// ======
+
+Table person
+{
+  person_id int [pk, increment]
+  contact_id int [ref: > contact.contact_id] // ของช่องทางติดต่อ
+  person_position varchar // ตำแหน่งของบุคคล ie. เจ้าของ, ผู้จัดการ, พนักงาน, ...
+  person_first_name varchar // ชื่อของบุคคล
+  person_last_name varchar // นามสกุลของบุคคล
+  person_nick_name varchar // ชื่อเล่น
+  person_birthdate int // วัน/เดือน/ปีเกิด ของบุคคล
+  person_img_url text // Link ของรูปภาพ
+}
+
+Table contact_channel {
+  contact_channel_type varchar // contact, person
+  ref_id int // contact_id, person_id
+  contact_channel_name varchar // ชื่อช่องทางการติดต่อ ie. เบอร์โทรศัพท์, ....
+  contact_channel_detail varchar // ช่องทางการติดต่อ ie. 0934567876
+  contact_channel_detail_2 varchar // เพิ่มเติมเช่น extension เบอร์
+}
+
+Table project_person
+{
+  role varchar // บทบาทของบุคคลที่ได้รับต่อโปรเจค
+  person_id int [ref: > person.person_id] // ID ของ Person
+  project_id int [ref: > project.project_id] // ID ของ Project
+}
+
+Table project
+{
+  project_id int [pk] // รหัสของโปรเจค ie. PR123453434
+  project_name varchar // ชื่อของโปรเจค
+  project_category project_category // ประเภทของโปรเจค
+  project_stage project_stage // ลักษณะงาน ie. วางประมูล, วาง spec, กำลังก่อสร้าง, ....
+  project_value varchar // มูลค่าของโปรเจค
+  project_address_id int // สถานที่ตั้งโครงการ
+  project_billing_category business_category // นิติบุคคล บุคคลธรรมดา etc.
+  project_billing_tax_id varchar // เลขผู้เสียภาษี
+  project_billing_business_name varchar // ชื่อกิจการ
+  project_billing_name_prefix name_prefix // คำนำหน้าชื่อ ie. นาย, นาง, นางสาว
+  project_billing_first_name varchar // ชื่อจริง
+  project_billing_last_name varchar // นามสกุล
+  project_billing_address_id int // ที่อยู่จดทะเบียน
+  project_deal_confidence percentage_steps // โอกาสดีลสำเร็จ
+  project_deal_target_date int // วันคาดการณ์ที่จะปิดดีล
+  project_remark varchar // หมายเหตุ
+  project_status project_status // สถานะของโปรเจค 
+  project_installment_status individual_status
+  project_shipment_status individual_status
+  project_payment_status individual_status
+  project_approval_status approval_status // โปรเจคนี้ถูกอนุมติแล้วหรือยัง
+  project_approver int // emp id of sales manager
+  _project_created int
+  _project_createdby int
+  _project_lastupdate int
+  _project_lastupdateby int
+
+}
+
+//Table project_history
+//{
+//  project_id int [pk] // รหัสของโปรเจค ie. PR123453434
+//  project_name varchar // ชื่อของโปรเจค
+//  project_category project_category // ประเภทของโปรเจค
+//  project_stage project_stage // ลักษณะงาน ie. วางประมูล, วาง spec, กำลังก่อสร้าง, ....
+//  project_value varchar // มูลค่าของโปรเจค
+//  project_address int // สถานที่ตั้งโครงการ
+//  project_billing_category business_category // นิติบุคคล บุคคลธรรมดา etc.
+//  project_billing_tax_id varchar // เลขผู้เสียภาษี
+//  project_billing_business_name varchar // ชื่อกิจการ
+//  project_billing_prefix_name varchar // คำนำหน้าชื่อ ie. นาย, นาง, นางสาว
+//  project_billing_first_name varchar // ชื่อจริง
+//  project_billing_last_name varchar // นามสกุล
+//  project_billing_address int // ที่อยู่จดทะเบียน
+//  project_deal_confidence percentage_steps // โอกาสดีลสำเร็จ
+//  project_deal_target_date int // วันคาดการณ์ที่จะปิดดีล
+//  project_remark varchar // หมายเหตุ
+//  project_status project_status // สถานะของโปรเจค 
+//  project_is_approved boolean // โปรเจคนี้ถูกอนุมติแล้วหรือยัง
+//  project_approver int // emp id of sales manager
+//  _project_history_created int
+//  _project_history_createdby int
+//}
+
+Table attachment{
+  attachment_id int [pk, increment] // Internal ID
+  attachment_name varchar // ชื่อเอกสาร เช่น ภพ20
+  attachment_file_name varchar // ชื่อไฟล์ของไฟล์แนบ
+  attachment_url text // Link ที่เก็บไฟล์แนบ
+  attachment_type attachment_type
+  ref_id int // project_id, warranty_id, contact_id
+  _attachment_created int
+  _attachment_createdby int
+  _attachment_lastupdate int
+  _attachment_lastupdateby int
+}
+
+Table project_contact
+{
+  contact_id int [ref: > contact.contact_id] // Internal ID ของ Contact
+  project_id int [ref: > project.project_id] // ID ของ Project
+}
+
+//Table project_contact_history
+//{
+//  contact_id int [ref: > contact.contact_id] // Internal ID ของ Contact
+//  project_id int [ref: > project.project_id] // ID ของ Project
+//}
+
+Table project_tag
+{
+  project_id int [ref: > project.project_id]
+  tag_id int
+}
+
+Table contact
+{
+  contact_id int [pk, increment]
+  contact_is_customer boolean // เป็นผู้ซื้อหรือไม่
+  contact_is_vendor boolean // เป็นผู้ขายหรือไม่
+  contact_business_category business_category // ประเภทของกิจการ ie. นิติบุคคล, บุคคลธรรมดา, ...
+  contact_commercial_type commercial_type // ประเภทของนิติบุคคลนั้นๆ ie. ห้างหุ้นส่วนจำกัด
+  contact_commercial_name varchar // ชื่อของกิจการ (กรณี นิติบุคคล / ร้านค้า)
+  contact_individual_name_prefix name_prefix // คำนำหน้าชื่อ (กรณี บุคคลธรรมดา)
+  contact_individual_first_name varchar // ชื่อจริง (กรณี บุคคลธรรมดา)
+  contact_individual_last_name varchar // นามสกุล (กรณี บุคคลธรรมดา)
+  contact_merchant_name varchar // ชื่อร้านค้า 
+  contact_tax_no varchar // เลขนิติบุคคล
+  billing_address_id int // ที่อยู่จดทะเบียน
+  postal_address_id int // ที่อยู่จัดส่งเอกสาร
+  lead_source_id int // รู้จักมาจากช่องทางไหน
+  contact_img_url text // รูปของผู้ติดต่อ
+  bank_account_id int // ข้อมูลธนาคาร
+  account_receivable_id int // บันทึกลูกหนี้
+  account_payable_id int // บันทึกเจ้าหนี้
+  contact_payment_type payment_type
+  contact_is_credit_limit boolean //กำหนดวงเงิน
+  contact_credit_limit int
+  _contact_created int
+  _contact_createdby int
+  _contact_lastupdate int
+  _contact_lastupdateby int
+}
+
+Table lead_source {
+  lead_source_id int [pk, increment]
+  lead_source_name varchar // configurable FB, IG, etc.
+}
+
+Table bank_account{
+  bank_account_id int [pk, increment] // Internal ID
+  contact_id int
+  bank_account_no int // เลขบัญชี
+  bank_account_bank_name varchar // ชื่อธนาคาร
+  bank_account_type varchar // ประเภทบัญชี
+  bank_account_name varchar // ชื่อบัญชี
+  bank_account_branch varchar // สาขาธนาคาร
+  bank_account_description varchar // คำอธิบาย
+}
+
+Table account{
+  account_id int [pk, increment] // Internal ID
+  account_no int // เลขบัญชี
+  account_type varchar // ประเภทบัญชี
+  account_name varchar // ชื่อบัญชี
+  account_description varchar // คำอธิบาย
+}
+
+
+
+Table project_employee
+{
+  role varchar // บทบาทที่ sale ได้รับ ie. ผู้รับผิดชอบโครงการ, ผู้รับผิดชอบร่วม, ....
+  project_id int [ref: > project.project_id] // รหัสของโปรเจค ie. PR123453434
+  employee_id int [ref: > employee.employee_id] // ID ของ Employee เพื่อระบุว่าเป็นพนักงานคนไหน
+}
+
+Table employee{
+  employee_id int [pk]// sale's emp ID
+  employee_firstname varchar // ชื่อของ sale
+  employee_lastname varchar // นามสกุลของ sale
+  employee_email varchar
+  employee_phone varchar
+  employee_img_url varchar
+  employee_password text
+  employee_status employee_status
+  employee_department varchar // แผนก (จัดซื้อ, บัญชี)
+  employee_position varchar // ตำแหน่งของ sale
+  _employee_created int
+  _employee_createdby int
+  _employee_lastupdate int
+  _employee_lastupdateby int
+  _employee_lastlogin int
+}
+
+Table contact_tag
+{
+  contact_id int [ref: > contact.contact_id]
+  tag_id int
+}
+
+Table tag
+{
+  tag_id int
+  tag_name varchar
+}
+
+Table event
+{
+  event_id int [pk, increment]
+  event_employee_id int
+  event_plan_start_date int // วันเวลาที่วางแผนไว้
+  event_plan_end_date int // วันเวลาสิ้นสุดที่วางแผนไว้
+  event_schedule_start_date int // วันเวลาที่เริ่มนัดหมาย
+  event_schedule_end_date int // วันเวลาที่สิ้นสุดนัดหมาย
+  event_topic varchar // ชื่อเรื่อง/หัวข้อ
+  project_id int [ref: > project.project_id] // รหัสโปรเจค
+  contact_id int [ref: > contact.contact_id] // Internal ID ของ Contact ที่รับผิดชอบโปรเจค
+  person_id int [ref: > person.person_id] // Internal ID ของ Person
+  event_person_phone varchar 
+  event_project_stage project_stage // สถานะงาน ie. กำลังก่อนสร้าง, ติดตั้งงาน
+  event_status event_status // สถานะของ Event ie. วางแผน, นัดหมาย, เข้าประชุม
+  event_dest_location_name varchar // ชื่อสถานที่
+  event_dest_latitude varchar // ค่า Latitude ของสถานที่
+  event_dest_longitude varchar // ค่า Longitude ของสถานที่
+  event_dest_google_map_link text // Link Google map ของสถานที่นัดหมาย
+  event_checkin_start_date int // วันเดืนนปีเวลาที่ทำการ CheckIn
+  event_checkin_start_location_name varchar // ชื่อสถานที่
+  event_checkin_start_latitude varchar
+  event_checkin_start_longitude varchar
+  event_checkin_dest_date int // วันเดืนนปีเวลาที่ทำการ CheckOut
+  event_checkin_dest_location_name varchar
+  event_checkin_dest_latitude varchar
+  event_checkin_dest_longitude varchar
+  event_distance int // ข้อมูล Location เมื่อ Check Out
+  event_remark varchar // หมายเหตุ
+  _event_created int
+  _event_createdby int
+  _event_lastupdate int
+  _event_lastupdateby int
+}
+
+Table warranty
+{
+  warranty_id int [pk, increment]
+  project_id int [ref: > project.project_id] // รหัสของโปรเจค
+  warranty_name varchar // ชื่อของ warranty
+  warranty_type warranty_type // ประเภทของ warranty
+  warranty_start_date int // วันเริ่มต้นของ warranty
+  warranty_end_date int // วันสิ้นสุดของ warranty
+  warranty_approver_name varchar // ชื่อของผู้อนุมติ
+}
+
+Table address{
+  address_id int [pk, increment] // Internal ID
+  address_name varchar // ชื่อที่อยู่ระบุว่าเป็นที่อยู่อะไร ie. ที่อยู่จดทะเบียน, ที่อยู่จัดส่งเอกสาร
+  address_building varchar // อาคาร/ หมู่บ้าน
+  address_house_no varchar // บ้านเลขที่
+  address_road varchar // ถนน
+  address_village_no varchar // หมู่ที่
+  address_sub_district varchar // แขวง/ตำบล
+  address_district varchar // เขต/อำเภอ
+  address_province varchar // จังหวัด
+  address_country varchar // ประเทศ
+  address_postal_code varchar // รหัสไปรษณีย์
+}
+
+Table project_connection{
+  project_id int
+  connection_type varchar // PO/QA/SO/IV
+  document_id varchar // PO-20210102111
+  _created int
+  _createdby int
+}
+
+Table project_activity {
+  project_id int
+  activity_type activity_type 
+  activity_data json // object which represent single log data
+  _project_activity_created int
+  _project_activity_createdby int
+}
+
+Ref: "project"."project_id" < "attachment"."ref_id"
+
+Ref: "contact"."contact_id" < "attachment"."ref_id"
+
+Ref: "warranty"."warranty_id" < "attachment"."ref_id"
+
+Ref: "contact"."contact_id" < "contact_channel"."ref_id"
+
+Ref: "person"."person_id" < "contact_channel"."ref_id"
+
+Ref: "address"."address_id" < "project"."project_address_id"
+
+Ref: "address"."address_id" < "project"."project_billing_address_id"
+
+Ref: "project"."project_id" < "project_connection"."project_id"
+
+Ref: "employee"."employee_id" < "event"."event_employee_id"
+
+Ref: "address"."address_id" < "contact"."billing_address_id"
+
+Ref: "address"."address_id" < "contact"."postal_address_id"
+
+//Ref: "project"."project_id" < "project_history"."project_id"
+
+Ref: "account"."account_id" < "contact"."account_receivable_id"
+
+Ref: "account"."account_id" < "contact"."account_payable_id"
+
+Ref: "project"."project_id" < "project_activity"."project_id"
+
+Ref: "tag"."tag_id" < "contact_tag"."tag_id"
+
+Ref: "tag"."tag_id" < "project_tag"."tag_id"
+
+Ref: "contact"."contact_id" < "bank_account"."contact_id"
+
+Ref: "lead_source"."lead_source_id" < "contact"."lead_source_id"
+
+Ref: "employee"."employee_id" < "event"."_event_createdby"
+
+Ref: "employee"."employee_id" < "event"."_event_lastupdateby"
+
+Ref: "employee"."employee_id" < "attachment"."_attachment_createdby"
+
+Ref: "employee"."employee_id" < "attachment"."_attachment_lastupdateby"
+
+Ref: "employee"."employee_id" < "contact"."_contact_createdby"
+
+Ref: "employee"."employee_id" < "contact"."_contact_lastupdateby"
+
+Ref: "employee"."employee_id" < "project"."_project_createdby"
+
+Ref: "employee"."employee_id" < "project"."_project_lastupdateby"
+
+Ref: "employee"."employee_id" < "project_connection"."_createdby"
+
+//Ref: "employee"."employee_id" < "project_history"."_project_history_createdby"
+
+Ref: "employee"."employee_id" < "project_activity"."_project_activity_createdby"
+
+Ref: "employee"."employee_id" < "employee"."_employee_createdby"
+
+Ref: "employee"."employee_id" < "employee"."_employee_lastupdateby"

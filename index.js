@@ -144,7 +144,7 @@ app.use("/v1/account", authenticateToken, accountRouter);
 app.use("/v1/account_type", authenticateToken, accountTypeRouter);
 app.use("/v1/account_journal", authenticateToken, accountJournalRouter);
 
-const port = process.env.PORT || 3306;
+const port = process.env.PORT || 8080;
 
 app.listen(port, () => {
   console.log("API listening on port:", port);

@@ -21,6 +21,7 @@ const activityModel = require("../models/activity.model");
 const moment = require("moment");
 
 const { genDocumentId } = require("../utils/generate");
+const { use } = require("../routes/project.route");
 
 function transformProjectStatus(project_status) {
     switch (project_status) {
@@ -410,7 +411,7 @@ exports.create = async (req, res) => {
 };
 
 exports.update = async (req, res) => {
-    if (req.body.constructor === Object && Object.keys(req.body).length === 0) {
+    if (!req.body || Object.keys(req.body).length === 0) {
         res.status(400).send({
             status: "error",
             message: `Please fill information`,
@@ -419,430 +420,592 @@ exports.update = async (req, res) => {
     const mysql = await db.getConnection();
     await mysql.beginTransaction();
 
-    const newData = new projectModel(req.body);
+    // const newData = new projectModel(req.body);
     try {
         const oldProjectData = await projectModel.getById(req.params.id);
 
         if (oldProjectData.project_status !== req.body.project_status) {
-            //prepare project_status_log data
-            let projectStatusLogData = {
-                project_id: req.params.id,
-                project_document_id: oldProjectData.project_document_id,
-                old_status: oldProjectData.project_status,
-                new_status: req.body.project_status,
-                project_status_log_remark: null
-            };
-            //create project_status_log
-            const projectStatusLogResult = await projectStatusLogModel.create(projectStatusLogData, req.user);
-
-            //query project_status_log from database
-            const project_status_log_db = await projectStatusLogModel.getById(projectStatusLogResult.insertId);
-
-            //prepare project_activity data type status_change
-            let project_activity_prep = {
-                owner_id: req.body.project_document_id,
-                owner_type: "PROJECT",
-                project_id: req.params.id,
-                activity_type: "status_change",
-                activity_item: {
-                    project_status_log: project_status_log_db,
-                    change_type: "เปลี่ยนแปลง",
-                    old_status: project_status_log_db.old_status,
-                    new_status: project_status_log_db.new_status,
-                    description: `เปลี่ยนแปลงสถานะจาก ${await transformProjectStatus(project_status_log_db.old_status)} เป็น ${await transformProjectStatus(project_status_log_db.new_status)}`
-                }
-            };
-            project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
-            //create projectActivity type status_change
-            const newProjectActivityData = new projectActivityModel(project_activity_prep);
-            await projectActivityModel.create(newProjectActivityData, req.user);
-
-            const newActivityData = new activityModel(project_activity_prep);
-            await activityModel.create(newActivityData, req.user);
+            await handleProjectStatusChange(req.params.id, oldProjectData, req.body.project_status, req.user);
         }
 
-        newData.project_address_id = req.body.project_address.address_id;
-        newData.project_billing_address_id = req.body.project_billing_address.address_id;
-        const result = await projectModel.update(
-            req.params.id,
-            newData,
-            req.user
-        );
+        await updateProjectAndAddresses(req.params.id, req.body, req.user);
 
-        //update address [project address]
-        await addressModel.update(
-            req.body.project_address.address_id,
-            req.body.project_address
-        );
+        await handleWarranties(req.params.id, res.body.warranty_list, req.user);
 
-        //update address [project billing address]
-        await addressModel.update(
-            req.body.project_billing_address.address_id,
-            req.body.project_billing_address
-        );
+        await handleProjectContacts(req.param.id, req.body.project_contact_list);
 
-        //query warranty in project from db
-        const warranty_list_db = await warrantyModel.getByProjectId(req.params.id);
-        let delete_warranty_list = [];
+        await handleProjectEmployees(req.params.id, req.body.project_employee_list, req.user);
 
+        await handleAttachments(req.params.id, req.body.attachment_list, "project", req.user);
 
-        //loop get delete_warranty_list
-        for (let warranty_db of warranty_list_db ? warranty_list_db : []) {
-            let has_warranty = false;
-            for (let warranty_req of req.body.warranty_list ? req.body.warranty_list : []) {
-                if (warranty_db.warranty_id === warranty_req.warranty_id) {
-                    has_warranty = true;
-                    break;
-                }
-            }
-            if (!has_warranty) {
-                delete_warranty_list.push(warranty_db);
-            }
-        }
-
-
-        //delete person don't have in req.body.person_list
-        for (let warranty of delete_warranty_list ? delete_warranty_list : []) {
-            await warrantyModel.delete(warranty.warranty_id);
-        }
-
-        //update and create new warranty
-        for (let warranty of req.body.warranty_list ? req.body.warranty_list : []) {
-            if (warranty.warranty_id === undefined) {
-                warranty.project_id = req.params.id;
-
-                const newWarrantyData = new warrantyModel(warranty);
-                const resultWarranty = await warrantyModel.create(newWarrantyData);
-
-                for (let attachment of warranty.warranty_attachment_list ? warranty.warranty_attachment_list : []) {
-                    attachment.attachment_type = "warranty";
-                    attachment.ref_id = resultWarranty.insertId;
-
-                    const newAttachmentData = new attachmentModel(attachment);
-                    await attachmentModel.create(newAttachmentData,
-                        req.user
-                    );
-                }
-            } else {
-                //if have warranty_id will update warranty data
-
-                //if warranty status is "approved" will save warranty_approver_name
-                if (warranty.warranty_status === "approved") {
-                    let employeeResult = await employeeModel.getById(req.user.employee_id);
-                    let warranty_approver_name =
-                        "" + req.user.employee_firstname + " " + req.user.employee_lastname;
-                    warranty.warranty_approver_name = warranty_approver_name;
-                    warranty.warranty_approver_document_id = employeeResult.employee_document_id;
-                    warranty.warranty_approved_date = moment().unix();
-
-                }
-                const newWarrantyData = new warrantyModel(warranty);
-                await warrantyModel.update(warranty.warranty_id, newWarrantyData);
-
-                //query attachment in warranty from db
-                const attachment_list_db = await attachmentModel.getByRefId(warranty.warranty_id,
-                    "warranty"
-                );
-
-                let delete_attachment_list = [];
-                //loop get delete_attachment_list
-                for (let attachment_db of attachment_list_db ? attachment_list_db : []) {
-                    let has_attachment = false;
-                    for (let attachment_req of warranty.warranty_attachment_list ? warranty.warranty_attachment_list : []) {
-                        if (attachment_db.attachment_id === attachment_req.attachment_id) {
-                            has_attachment = true;
-                            break;
-                        }
-                    }
-                    if (!has_attachment) {
-                        delete_attachment_list.push(attachment_db);
-                    }
-                }
-
-                //delete attachment don't have in req.body.attachment_list
-                for (let attachment of delete_attachment_list ? delete_attachment_list : []) {
-                    await attachmentModel.delete(attachment.attachment_id);
-                }
-
-                //create new attachment in warranty
-                for (let attachment of warranty.warranty_attachment_list ? warranty.warranty_attachment_list : []) {
-                    if (attachment.attachment_id === undefined) {
-                        attachment.attachment_type = "warranty";
-                        attachment.ref_id = warranty.warranty_id;
-
-                        const newAttachmentData = new attachmentModel(attachment);
-                        await attachmentModel.create(newAttachmentData,
-                            req.user
-                        );
-                    }
-                }
-            }
-        }
-
-        //query project_contact in project from db
-        const project_contact_list_db = await projectContactModel.getByProjectId(
-            req.params.id
-        );
-        let delete_project_contact_list = [];
-
-        //loop get delete_project_contact_list
-        for (let project_contact_db of project_contact_list_db ? project_contact_list_db : []) {
-            let has_project_contact = false;
-            for (let project_contact_req of req.body.project_contact_list ? req.body.project_contact_list : []) {
-                if (project_contact_db.project_contact_id ===
-                    project_contact_req.project_contact_id
-                ) {
-                    has_project_contact = true;
-                    break;
-                }
-            }
-            if (!has_project_contact) {
-                delete_project_contact_list.push(project_contact_db);
-            }
-        }
-
-        //delete project_contact don't have in req.body.project_contact_list
-        for (let project_contact of delete_project_contact_list ? delete_project_contact_list : []) {
-            await projectContactModel.delete(project_contact.project_contact_id);
-        }
-
-        //create new project_contact in project
-        for (let project_contact of req.body.project_contact_list ? req.body.project_contact_list : []) {
-            if (project_contact.project_contact_id === undefined) {
-                project_contact.project_id = req.params.id;
-
-                const newProjectContactData = new projectContactModel(project_contact);
-                await projectContactModel.create(newProjectContactData);
-            } else {
-                //if have project_contact_id will update data in project_contact
-                const newProjectContactData = new projectContactModel(project_contact);
-                await projectContactModel.update(project_contact.project_contact_id,
-                    newProjectContactData
-                );
-            }
-        }
-
-        //query project_employee in project from db
-        const project_employee_list_db = await projectEmployeeModel.getByProjectId(
-            req.params.id
-        );
-        let delete_project_employee_list = [];
-
-        //loop get delete_project_employee
-        for (let project_employee_db of project_employee_list_db ? project_employee_list_db : []) {
-            let has_project_employee = false;
-            for (let project_employee_req of req.body.project_employee_list ? req.body.project_employee_list : []) {
-                if (project_employee_db.project_employee_id ===
-                    project_employee_req.project_employee_id
-                ) {
-                    has_project_employee = true;
-                    break;
-                }
-            }
-            if (!has_project_employee) {
-                delete_project_employee_list.push(project_employee_db);
-            }
-        }
-
-        //delete project_employee don't have in req.body.project_employee_list
-        for (let project_employee of delete_project_employee_list ? delete_project_employee_list : []) {
-
-            //delete project_employee
-            await projectEmployeeModel.delete(project_employee.project_employee_id);
-
-            //query employee data from database
-            const employee_data_db = await employeeModel.getById(project_employee.employee_id);
-
-            //prepare project_activity data type contact_change
-            let project_activity_prep = {
-                owner_id: req.body.project_document_id,
-                owner_type: "PROJECT",
-                project_id: req.params.id,
-                activity_type: "contact_change",
-                activity_item: {
-                    change_type: "ลบ",
-                    employee: employee_data_db,
-                    description: `ลบ ${employee_data_db.employee_firstname} ${employee_data_db.employee_lastname} จากผู้รับผิดชอบ`
-                }
-            };
-
-            project_activity_prep.activity_item.employee.role = project_employee.role;
-            project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
-            //create projectActivity type contact_change
-            const newProjectActivityData = new projectActivityModel(project_activity_prep);
-            await projectActivityModel.create(newProjectActivityData, req.user);
-
-            const newActivityData = new activityModel(project_activity_prep);
-            await activityModel.create(newActivityData, req.user);
-        }
-
-        //create new project_employee in project
-        for (let project_employee of req.body.project_employee_list ? req.body.project_employee_list : []) {
-            if (project_employee.project_employee_id === undefined) {
-                project_employee.project_id = req.params.id;
-
-                const newProjectEmployeeData = new projectEmployeeModel(project_employee
-                );
-                await projectEmployeeModel.create(newProjectEmployeeData);
-
-                //query employee data from database
-                const employee_data_db = await employeeModel.getById(project_employee.employee_id);
-
-                //prepare project_activity data type contact_change
-                let project_activity_prep = {
-                    owner_id: req.body.project_document_id,
-                    owner_type: "PROJECT",
-                    project_id: req.params.id,
-                    activity_type: "contact_change",
-                    activity_item: {
-                        change_type: "เพิ่ม",
-                        employee: employee_data_db,
-                        description: `เพิ่ม ${employee_data_db.employee_firstname} ${employee_data_db.employee_lastname} ในผู้รับผิดชอบ`
-                    }
-                };
-
-                project_activity_prep.activity_item.employee.role = project_employee.role;
-                project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
-                //create projectActivity type contact_change
-                const newProjectActivityData = new projectActivityModel(project_activity_prep);
-                await projectActivityModel.create(newProjectActivityData, req.user);
-
-                const newActivityData = new activityModel(project_activity_prep);
-                await activityModel.create(newActivityData, req.user);
-            } else {
-                //query old project_employee_data from database
-                const oldProjectEmployeeData = await projectEmployeeModel.getById(project_employee.project_employee_id);
-
-                //if have project_employee_id will update data in project_employee
-                const newProjectEmployeeData = new projectEmployeeModel(project_employee
-                );
-                await projectEmployeeModel.update(project_employee.project_employee_id,
-                    newProjectEmployeeData
-                );
-
-                if (oldProjectEmployeeData.employee_id !== project_employee.employee_id) {
-                    //query employee data from database
-                    const old_employee_data = await employeeModel.getById(oldProjectEmployeeData.employee_id);
-                    const new_employee_data = await employeeModel.getById(project_employee.employee_id);
-
-                    let project_activity_prep = {
-                        owner_id: req.body.project_document_id,
-                        owner_type: "PROJECT",
-                        project_id: req.params.id,
-                        activity_type: "contact_change",
-                        activity_item: {
-                            change_type: "เปลี่ยนแปลง",
-                            employee: new_employee_data,
-                            description: `เปลี่ยน ${oldProjectEmployeeData.role} จาก ${old_employee_data.employee_firstname} ${old_employee_data.employee_lastname} เป็น ${new_employee_data.employee_firstname} ${new_employee_data.employee_lastname} `
-                        }
-                    };
-
-                    // project_activity_prep.activity_item.employee.role = oldProjectEmploeeData.role;
-                    project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
-                    //create projectActivity type contact_change
-                    const newProjectActivityData = new projectActivityModel(project_activity_prep);
-                    await projectActivityModel.create(newProjectActivityData, req.user);
-
-                    const newActivityData = new activityModel(project_activity_prep);
-                    await activityModel.create(newActivityData, req.user);
-                }
-            }
-        }
-
-        //query attachment in project from db
-        const attachment_list_db = await attachmentModel.getByRefId(
-            req.params.id,
-            "project"
-        );
-        let delete_attachment_list = [];
-
-        //loop get delete_attachment_list
-        for (let attachment_db of attachment_list_db ? attachment_list_db : []) {
-            let has_attachment = false;
-            for (let attachment_req of req.body.attachment_list ? req.body.attachment_list : []) {
-                if (attachment_db.attachment_id === attachment_req.attachment_id) {
-                    has_attachment = true;
-                    break;
-                }
-            }
-            if (!has_attachment) {
-                delete_attachment_list.push(attachment_db);
-            }
-        }
-
-        //delete attachment don't have in req.body.attachment_list
-        for (let attachment of delete_attachment_list ? delete_attachment_list : []) {
-            await attachmentModel.delete(attachment.attachment_id);
-        }
-
-        //create new attachment in contact
-        for (let attachment of req.body.attachment_list ? req.body.attachment_list : []) {
-            if (attachment.attachment_id === undefined) {
-                attachment.attachment_type = "project";
-                attachment.ref_id = req.params.id;
-
-                const newAttachmentData = new attachmentModel(attachment);
-                await attachmentModel.create(newAttachmentData, req.user);
-            }
-        }
-
-        //delete all tag of project
-        await projectTagModel.deleteByProjectId(req.params.id);
-
-        if (req.body.tag_list.length !== 0) {
-            let tag_list = req.body.tag_list;
-            let tag_list_prep = [];
-
-            for (let tag of tag_list ? tag_list : []) {
-                //check tag name in tag table
-                let tagResult = await tagModel.getByTagName(tag.tag_name);
-
-                //if tag_name is undefined will create new Tag
-                if (tagResult === undefined) {
-                    //create new Tag
-                    const newTagResult = await tagModel.create(tag);
-
-                    let tag_prep = {
-                        tag_id: newTagResult.insertId,
-                        tag_name: tag.tag_name,
-                    };
-                    tag_list_prep.push(tag_prep);
-                } else {
-                    tag_list_prep.push(tagResult);
-                }
-            }
-
-            //create projectTag
-            for (let tag of tag_list_prep ? tag_list_prep : []) {
-                tag.project_id = req.params.id;
-
-                const newProjectTagData = new projectTagModel(tag);
-                await projectTagModel.create(newProjectTagData);
-            }
-        }
+        await handleTags(req.params.id, req.body.tag_list);
 
         await mysql.commit();
         await mysql.release();
-        res.send({
-            status: "success",
-            data: result,
-        });
     } catch (error) {
-        console.log("Rollback successful");
-        console.dir(error, { depth: null });
-        await mysql.rollback(function (error) {
-            res.status(400).send({
-                status: "error",
-                message: `${error}`,
-            });
-        });
+        console.error("Error during update:", error);
+        await mysql.rollback();
+        await mysql.release();
 
-        res.status(400).send({
-            status: "error",
-            message: `${error}`,
-        });
+        res.status(400).send({status: "error", message: `${error.message}`});
     }
 };
+
+async function handleProjectStatusChange(projectId,oldData, newStatus, user) {
+    const logData = {
+        project_id: projectId,
+        project_document_id: oldData.project_document_id,
+        old_status: oldData.project_status,
+        new_status: newStatus,
+        project_status_log_remark: null,
+    };
+    const logResult = await projectStatusLogModel.create(logData, user);
+    const logEntry = await projectActivityModel.getById(logResult.insertId);
+
+    const activityData = {
+        owner_id: oldData.project_document_id,
+        owner_type: "PROJECT",
+        project_id: projectId,
+        activity_type: "status_change",
+        activity_item: {
+            project_status_log: logEntry,
+            change_type: "เปลี่ยนแปลง",
+            old_status: logEntry.old_status,
+            new_status: logEntry.new_status,
+            description: `เปลี่ยนแปลงสถานะจาก ${await transformProjectStatus(logEntry.old_status)} เป็น ${await transformProjectStatus(logEntry.new_status)}`,
+        },
+    };
+
+    const projectActivity = new projectActivityModel(activityData);
+    await projectActivityModel.create(projectActivity, user);
+
+    const generalActivity = new activityModel(activityData);
+    await activityModel.create(generalActivity, user);
+}
+
+async function updateProjectAndAddresses(projectId, data, user) {
+    if (!data.project_address || !data.project_address/address_id) {
+        throw new Error("Missing or invalid project_address");
+    }
+    if (!data.project_billing_address || !data.project_billing_address.address_id) {
+        throw new Error("Missing or invalid project_billing_address");
+    }
+    const updatedData = new projectModel(data);
+    updatedData.project_address_id = data.project_address.address_id;
+    updatedData.project_billing_address_id = data.project_billing_address.address_id;
+
+    await projectModel.update(projectId, updatedData, user);
+
+    await addressModel.update(data.project_address.address_id, data.project_address);
+    await addressModel.update(data.project_billing_address.address_id, data.project_billing_address);
+}
+
+async function handleWarranties(projectId, warrantyList, user) {
+    const existingWarranties = await warrantyModel.getByProjectId(projectId) || [];
+
+    const warrantiesToDelete = existingWarranties.filter(w => 
+        !warrantyList.some(reqW => reqW.warranty_id === w.warranty_id)
+    );
+    const warrantiesToUpdate = warrantyList.filter(w => w.warranty_id);
+    const warrantiesToCreate = warrantyList.filter(w => !w.warranty_id);
+
+    for (const w of warrantiesToDelete) {
+        await warrantyModel.delete(w.warranty_id);
+    }
+
+    for (const w of warrantiesToUpdate) {
+        if (w.warranty_status === "approved") {
+            const userInfo = await employeeModel.getById(user.employee_id);
+            w.warranty_approver_name = `${user.employee_firstname} ${user.employee_lastname}`;
+            w.warranty_approver_document_id = userInfo.employee_document_id;
+            w.warranty_approved_date = moment().unix();
+        }
+        await warrantyModel.update(w.warranty_id, new warrantyModel(w));
+    }
+
+    for (const w of warrantiesToCreate) {
+        w.project_id = projectId;
+        const result = await warrantyModel.create(new warrantyModel(w));
+        for (const attachment of w.warranty_attachment_list || []) {
+            attachment.attachment_type = "warranty";
+            attachment.ref_id = result.insertId;
+            await attachmentModel.create(new attachmentModel(attachment), user);
+        }
+    }
+}
+
+async function handleProjectContacts(projectId, contactList) {
+    const existingContacts = await projectContactModel.getByProjectId(projectId) || [];
+    const contactsToDelete = existingContacts.filter(c => 
+        !contactList.some(reqC => reqC.project_contact_id === c.project_contact_id)
+    );
+    const contactsToUpdate = contactList.filter(c => c.project_contact_id);
+    const contactsToCreate = contactList.filter(c => !c.project_contact_id);
+
+    for (const c of contactsToDelete) {
+        await projectContactModel.delete(c.project_contact_id);
+    }
+
+    for (const c of contactsToUpdate) {
+        await projectContactModel.update(c.project_contact_id, new projectContactModel(c));
+    }
+
+    for (const c of contactsToCreate) {
+        c.project_id = projectId;
+        await projectContactModel.create(new projectContactModel(c));
+    }
+}
+
+async function handleAttachments(refId, attachments, type, user) {
+    const existingAttachments = await attachmentModel.getByRefId(refId, type) || [];
+    const attachmentsToDelete = existingAttachments.filter(a => 
+        !attachments.some(reqA => reqA.attachment_id === a.attachment_id)
+    );
+    const attachmentsToCreate = attachments.filter(a => !a.attachment_id);
+
+    for (const a of attachmentsToDelete) {
+        await attachmentModel.delete(a.attachment_id);
+    }
+
+    for (const a of attachmentsToCreate) {
+        a.attachment_type = type;
+        a.ref_id = refId;
+        await attachmentModel.create(new attachmentModel(a), user);
+    }
+}
+
+async function handleTags(projectId, tags) {
+    await projectTagModel.deleteByProjectId(projectId);
+
+    for (const tag of tags || []) {
+        let tagData = await tagModel.getByTagName(tag.tag_name);
+        if (!tagData) {
+            const result = await tagModel.create(tag);
+            tagData = { tag_id: result.insertId, tag_name: tag.tag_name };
+        }
+        await projectTagModel.create({ ...tagData, project_id: projectId });
+    }
+}
+        // if (oldProjectData.project_status !== req.body.project_status) {
+        //     //prepare project_status_log data
+        //     let projectStatusLogData = {
+        //         project_id: req.params.id,
+        //         project_document_id: oldProjectData.project_document_id,
+        //         old_status: oldProjectData.project_status,
+        //         new_status: req.body.project_status,
+        //         project_status_log_remark: null
+        //     };
+        //     //create project_status_log
+        //     const projectStatusLogResult = await projectStatusLogModel.create(projectStatusLogData, req.user);
+
+        //     //query project_status_log from database
+        //     const project_status_log_db = await projectStatusLogModel.getById(projectStatusLogResult.insertId);
+
+        //     //prepare project_activity data type status_change
+        //     let project_activity_prep = {
+        //         owner_id: req.body.project_document_id,
+        //         owner_type: "PROJECT",
+        //         project_id: req.params.id,
+        //         activity_type: "status_change",
+        //         activity_item: {
+        //             project_status_log: project_status_log_db,
+        //             change_type: "เปลี่ยนแปลง",
+        //             old_status: project_status_log_db.old_status,
+        //             new_status: project_status_log_db.new_status,
+        //             description: `เปลี่ยนแปลงสถานะจาก ${await transformProjectStatus(project_status_log_db.old_status)} เป็น ${await transformProjectStatus(project_status_log_db.new_status)}`
+        //         }
+        //     };
+        //     project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
+        //     //create projectActivity type status_change
+        //     const newProjectActivityData = new projectActivityModel(project_activity_prep);
+        //     await projectActivityModel.create(newProjectActivityData, req.user);
+
+        //     const newActivityData = new activityModel(project_activity_prep);
+        //     await activityModel.create(newActivityData, req.user);
+        // }
+
+//         newData.project_address_id = req.body.project_address.address_id;
+//         newData.project_billing_address_id = req.body.project_billing_address.address_id;
+//         const result = await projectModel.update(
+//             req.params.id,
+//             newData,
+//             req.user
+//         );
+
+//         //update address [project address]
+//         await addressModel.update(
+//             req.body.project_address.address_id,
+//             req.body.project_address
+//         );
+
+//         //update address [project billing address]
+//         await addressModel.update(
+//             req.body.project_billing_address.address_id,
+//             req.body.project_billing_address
+//         );
+
+//         //query warranty in project from db
+//         const warranty_list_db = await warrantyModel.getByProjectId(req.params.id);
+//         let delete_warranty_list = [];
+
+
+//         //loop get delete_warranty_list
+//         for (let warranty_db of warranty_list_db ? warranty_list_db : []) {
+//             let has_warranty = false;
+//             for (let warranty_req of req.body.warranty_list ? req.body.warranty_list : []) {
+//                 if (warranty_db.warranty_id === warranty_req.warranty_id) {
+//                     has_warranty = true;
+//                     break;
+//                 }
+//             }
+//             if (!has_warranty) {
+//                 delete_warranty_list.push(warranty_db);
+//             }
+//         }
+
+
+//         //delete person don't have in req.body.person_list
+//         for (let warranty of delete_warranty_list ? delete_warranty_list : []) {
+//             await warrantyModel.delete(warranty.warranty_id);
+//         }
+
+//         //update and create new warranty
+//         for (let warranty of req.body.warranty_list ? req.body.warranty_list : []) {
+//             if (warranty.warranty_id === undefined) {
+//                 warranty.project_id = req.params.id;
+
+//                 const newWarrantyData = new warrantyModel(warranty);
+//                 const resultWarranty = await warrantyModel.create(newWarrantyData);
+
+//                 for (let attachment of warranty.warranty_attachment_list ? warranty.warranty_attachment_list : []) {
+//                     attachment.attachment_type = "warranty";
+//                     attachment.ref_id = resultWarranty.insertId;
+
+//                     const newAttachmentData = new attachmentModel(attachment);
+//                     await attachmentModel.create(newAttachmentData,
+//                         req.user
+//                     );
+//                 }
+//             } else {
+//                 //if have warranty_id will update warranty data
+
+//                 //if warranty status is "approved" will save warranty_approver_name
+//                 if (warranty.warranty_status === "approved") {
+//                     let employeeResult = await employeeModel.getById(req.user.employee_id);
+//                     let warranty_approver_name =
+//                         "" + req.user.employee_firstname + " " + req.user.employee_lastname;
+//                     warranty.warranty_approver_name = warranty_approver_name;
+//                     warranty.warranty_approver_document_id = employeeResult.employee_document_id;
+//                     warranty.warranty_approved_date = moment().unix();
+
+//                 }
+//                 const newWarrantyData = new warrantyModel(warranty);
+//                 await warrantyModel.update(warranty.warranty_id, newWarrantyData);
+
+//                 //query attachment in warranty from db
+//                 const attachment_list_db = await attachmentModel.getByRefId(warranty.warranty_id,
+//                     "warranty"
+//                 );
+
+//                 let delete_attachment_list = [];
+//                 //loop get delete_attachment_list
+//                 for (let attachment_db of attachment_list_db ? attachment_list_db : []) {
+//                     let has_attachment = false;
+//                     for (let attachment_req of warranty.warranty_attachment_list ? warranty.warranty_attachment_list : []) {
+//                         if (attachment_db.attachment_id === attachment_req.attachment_id) {
+//                             has_attachment = true;
+//                             break;
+//                         }
+//                     }
+//                     if (!has_attachment) {
+//                         delete_attachment_list.push(attachment_db);
+//                     }
+//                 }
+
+//                 //delete attachment don't have in req.body.attachment_list
+//                 for (let attachment of delete_attachment_list ? delete_attachment_list : []) {
+//                     await attachmentModel.delete(attachment.attachment_id);
+//                 }
+
+//                 //create new attachment in warranty
+//                 for (let attachment of warranty.warranty_attachment_list ? warranty.warranty_attachment_list : []) {
+//                     if (attachment.attachment_id === undefined) {
+//                         attachment.attachment_type = "warranty";
+//                         attachment.ref_id = warranty.warranty_id;
+
+//                         const newAttachmentData = new attachmentModel(attachment);
+//                         await attachmentModel.create(newAttachmentData,
+//                             req.user
+//                         );
+//                     }
+//                 }
+//             }
+//         }
+
+//         //query project_contact in project from db
+//         const project_contact_list_db = await projectContactModel.getByProjectId(
+//             req.params.id
+//         );
+//         let delete_project_contact_list = [];
+
+//         //loop get delete_project_contact_list
+//         for (let project_contact_db of project_contact_list_db ? project_contact_list_db : []) {
+//             let has_project_contact = false;
+//             for (let project_contact_req of req.body.project_contact_list ? req.body.project_contact_list : []) {
+//                 if (project_contact_db.project_contact_id ===
+//                     project_contact_req.project_contact_id
+//                 ) {
+//                     has_project_contact = true;
+//                     break;
+//                 }
+//             }
+//             if (!has_project_contact) {
+//                 delete_project_contact_list.push(project_contact_db);
+//             }
+//         }
+
+//         //delete project_contact don't have in req.body.project_contact_list
+//         for (let project_contact of delete_project_contact_list ? delete_project_contact_list : []) {
+//             await projectContactModel.delete(project_contact.project_contact_id);
+//         }
+
+//         //create new project_contact in project
+//         for (let project_contact of req.body.project_contact_list ? req.body.project_contact_list : []) {
+//             if (project_contact.project_contact_id === undefined) {
+//                 project_contact.project_id = req.params.id;
+
+//                 const newProjectContactData = new projectContactModel(project_contact);
+//                 await projectContactModel.create(newProjectContactData);
+//             } else {
+//                 //if have project_contact_id will update data in project_contact
+//                 const newProjectContactData = new projectContactModel(project_contact);
+//                 await projectContactModel.update(project_contact.project_contact_id,
+//                     newProjectContactData
+//                 );
+//             }
+//         }
+
+//         //query project_employee in project from db
+//         const project_employee_list_db = await projectEmployeeModel.getByProjectId(
+//             req.params.id
+//         );
+//         let delete_project_employee_list = [];
+
+//         //loop get delete_project_employee
+//         for (let project_employee_db of project_employee_list_db ? project_employee_list_db : []) {
+//             let has_project_employee = false;
+//             for (let project_employee_req of req.body.project_employee_list ? req.body.project_employee_list : []) {
+//                 if (project_employee_db.project_employee_id ===
+//                     project_employee_req.project_employee_id
+//                 ) {
+//                     has_project_employee = true;
+//                     break;
+//                 }
+//             }
+//             if (!has_project_employee) {
+//                 delete_project_employee_list.push(project_employee_db);
+//             }
+//         }
+
+//         //delete project_employee don't have in req.body.project_employee_list
+//         for (let project_employee of delete_project_employee_list ? delete_project_employee_list : []) {
+
+//             //delete project_employee
+//             await projectEmployeeModel.delete(project_employee.project_employee_id);
+
+//             //query employee data from database
+//             const employee_data_db = await employeeModel.getById(project_employee.employee_id);
+
+//             //prepare project_activity data type contact_change
+//             let project_activity_prep = {
+//                 owner_id: req.body.project_document_id,
+//                 owner_type: "PROJECT",
+//                 project_id: req.params.id,
+//                 activity_type: "contact_change",
+//                 activity_item: {
+//                     change_type: "ลบ",
+//                     employee: employee_data_db,
+//                     description: `ลบ ${employee_data_db.employee_firstname} ${employee_data_db.employee_lastname} จากผู้รับผิดชอบ`
+//                 }
+//             };
+
+//             project_activity_prep.activity_item.employee.role = project_employee.role;
+//             project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
+//             //create projectActivity type contact_change
+//             const newProjectActivityData = new projectActivityModel(project_activity_prep);
+//             await projectActivityModel.create(newProjectActivityData, req.user);
+
+//             const newActivityData = new activityModel(project_activity_prep);
+//             await activityModel.create(newActivityData, req.user);
+//         }
+
+//         //create new project_employee in project
+//         for (let project_employee of req.body.project_employee_list ? req.body.project_employee_list : []) {
+//             if (project_employee.project_employee_id === undefined) {
+//                 project_employee.project_id = req.params.id;
+
+//                 const newProjectEmployeeData = new projectEmployeeModel(project_employee
+//                 );
+//                 await projectEmployeeModel.create(newProjectEmployeeData);
+
+//                 //query employee data from database
+//                 const employee_data_db = await employeeModel.getById(project_employee.employee_id);
+
+//                 //prepare project_activity data type contact_change
+//                 let project_activity_prep = {
+//                     owner_id: req.body.project_document_id,
+//                     owner_type: "PROJECT",
+//                     project_id: req.params.id,
+//                     activity_type: "contact_change",
+//                     activity_item: {
+//                         change_type: "เพิ่ม",
+//                         employee: employee_data_db,
+//                         description: `เพิ่ม ${employee_data_db.employee_firstname} ${employee_data_db.employee_lastname} ในผู้รับผิดชอบ`
+//                     }
+//                 };
+
+//                 project_activity_prep.activity_item.employee.role = project_employee.role;
+//                 project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
+//                 //create projectActivity type contact_change
+//                 const newProjectActivityData = new projectActivityModel(project_activity_prep);
+//                 await projectActivityModel.create(newProjectActivityData, req.user);
+
+//                 const newActivityData = new activityModel(project_activity_prep);
+//                 await activityModel.create(newActivityData, req.user);
+//             } else {
+//                 //query old project_employee_data from database
+//                 const oldProjectEmployeeData = await projectEmployeeModel.getById(project_employee.project_employee_id);
+
+//                 //if have project_employee_id will update data in project_employee
+//                 const newProjectEmployeeData = new projectEmployeeModel(project_employee
+//                 );
+//                 await projectEmployeeModel.update(project_employee.project_employee_id,
+//                     newProjectEmployeeData
+//                 );
+
+//                 if (oldProjectEmployeeData.employee_id !== project_employee.employee_id) {
+//                     //query employee data from database
+//                     const old_employee_data = await employeeModel.getById(oldProjectEmployeeData.employee_id);
+//                     const new_employee_data = await employeeModel.getById(project_employee.employee_id);
+
+//                     let project_activity_prep = {
+//                         owner_id: req.body.project_document_id,
+//                         owner_type: "PROJECT",
+//                         project_id: req.params.id,
+//                         activity_type: "contact_change",
+//                         activity_item: {
+//                             change_type: "เปลี่ยนแปลง",
+//                             employee: new_employee_data,
+//                             description: `เปลี่ยน ${oldProjectEmployeeData.role} จาก ${old_employee_data.employee_firstname} ${old_employee_data.employee_lastname} เป็น ${new_employee_data.employee_firstname} ${new_employee_data.employee_lastname} `
+//                         }
+//                     };
+
+//                     // project_activity_prep.activity_item.employee.role = oldProjectEmploeeData.role;
+//                     project_activity_prep.activity_data = JSON.stringify(project_activity_prep.activity_item);
+//                     //create projectActivity type contact_change
+//                     const newProjectActivityData = new projectActivityModel(project_activity_prep);
+//                     await projectActivityModel.create(newProjectActivityData, req.user);
+
+//                     const newActivityData = new activityModel(project_activity_prep);
+//                     await activityModel.create(newActivityData, req.user);
+//                 }
+//             }
+//         }
+
+//         //query attachment in project from db
+//         const attachment_list_db = await attachmentModel.getByRefId(
+//             req.params.id,
+//             "project"
+//         );
+//         let delete_attachment_list = [];
+
+//         //loop get delete_attachment_list
+//         for (let attachment_db of attachment_list_db ? attachment_list_db : []) {
+//             let has_attachment = false;
+//             for (let attachment_req of req.body.attachment_list ? req.body.attachment_list : []) {
+//                 if (attachment_db.attachment_id === attachment_req.attachment_id) {
+//                     has_attachment = true;
+//                     break;
+//                 }
+//             }
+//             if (!has_attachment) {
+//                 delete_attachment_list.push(attachment_db);
+//             }
+//         }
+
+//         //delete attachment don't have in req.body.attachment_list
+//         for (let attachment of delete_attachment_list ? delete_attachment_list : []) {
+//             await attachmentModel.delete(attachment.attachment_id);
+//         }
+
+//         //create new attachment in contact
+//         for (let attachment of req.body.attachment_list ? req.body.attachment_list : []) {
+//             if (attachment.attachment_id === undefined) {
+//                 attachment.attachment_type = "project";
+//                 attachment.ref_id = req.params.id;
+
+//                 const newAttachmentData = new attachmentModel(attachment);
+//                 await attachmentModel.create(newAttachmentData, req.user);
+//             }
+//         }
+
+//         //delete all tag of project
+//         await projectTagModel.deleteByProjectId(req.params.id);
+
+//         if (req.body.tag_list.length !== 0) {
+//             let tag_list = req.body.tag_list;
+//             let tag_list_prep = [];
+
+//             for (let tag of tag_list ? tag_list : []) {
+//                 //check tag name in tag table
+//                 let tagResult = await tagModel.getByTagName(tag.tag_name);
+
+//                 //if tag_name is undefined will create new Tag
+//                 if (tagResult === undefined) {
+//                     //create new Tag
+//                     const newTagResult = await tagModel.create(tag);
+
+//                     let tag_prep = {
+//                         tag_id: newTagResult.insertId,
+//                         tag_name: tag.tag_name,
+//                     };
+//                     tag_list_prep.push(tag_prep);
+//                 } else {
+//                     tag_list_prep.push(tagResult);
+//                 }
+//             }
+
+//             //create projectTag
+//             for (let tag of tag_list_prep ? tag_list_prep : []) {
+//                 tag.project_id = req.params.id;
+
+//                 const newProjectTagData = new projectTagModel(tag);
+//                 await projectTagModel.create(newProjectTagData);
+//             }
+//         }
+
+//         await mysql.commit();
+//         await mysql.release();
+//         res.send({
+//             status: "success",
+//             data: result,
+//         });
+//     } catch (error) {
+//         console.log("Rollback successful");
+//         console.dir(error, { depth: null });
+//         await mysql.rollback(function (error) {
+//             res.status(400).send({
+//                 status: "error",
+//                 message: `${error}`,
+//             });
+//         });
+
+//         res.status(400).send({
+//             status: "error",
+//             message: `${error}`,
+//         });
+//     }
+// };
 
 exports.delete = async (req, res) => {
     try {

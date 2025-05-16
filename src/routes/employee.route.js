@@ -11,7 +11,7 @@ router.post("/", authMiddleware.hasRole("admin"), employeeController.create);
 
 router.get("/:employee_document_id/team", employeeController.getTeam);
 
-router.post("/", employeeController.create);
+// router.post("/", employeeController.create);
 
 router.put(
     "/:employee_document_id",

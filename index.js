@@ -30,6 +30,7 @@ const authenticateToken = (req, res, next) => {
       message: "Missing Token",
     });
   }
+  console.log("JWT_SECRET:", process.env.JWT_SECRET);
   jwt.verify(token, process.env.JWT_SECRET, async (err, user) => {
     if (err) {
       return res.status(403).json({
